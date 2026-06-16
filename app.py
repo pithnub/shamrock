@@ -14,17 +14,18 @@ SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_Pd
 # --- CONNECT TO GOOGLE SHEETS VIA RAW SECRETS ---
 try:
     # Read the raw text block from Streamlit secrets and parse it as a dictionary
-    secret_credentials = json.loads(st.secrets["secrets"]["raw_json"])
+    raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     
-    # Remove the conflicting "type" key if it exists
-    if "type" in secret_credentials:
-        del secret_credentials["type"]
+    # Ensure the 'type' value inside the JSON block is set to 'service_account'
+    # (Google needs this inside the credentials block to validate the key)
+    raw_credentials["type"] = "service_account"
         
-    # Initialize the core connection object with just the credential parameters
+    # Initialize the core connection object by nesting the credentials
+    # under the 'service_account_info' parameter that streamlit-gsheets expects
     conn = st.connection(
         "gsheets",
         type=GSheetsConnection,
-        **secret_credentials
+        service_account_info=raw_credentials
     )
     
     # Pass the spreadsheet URL directly into the read function call
