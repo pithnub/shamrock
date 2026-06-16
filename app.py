@@ -10,51 +10,30 @@ st.title("🧪 Chemical Sample Inventory")
 
 # Hardcoded direct ID string
 SPREADSHEET_ID = "1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo"
-
 DEFAULT_COLS = ['product_name', 'quantity', 'received_date', 'msds_link', 'notes']
-df = pd.DataFrame(columns=DEFAULT_COLS)
-worksheet = None
 
 # --- DIRECT GOOGLE SHEETS CONNECTION ---
+# Load credentials and strictly ensure the private key string structure is preserved
+raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
+raw_credentials["type"] = "service_account"
+
+if "private_key" in raw_credentials:
+    # Clean up standard JSON escaping issues that often occur during text parsing
+    raw_credentials["private_key"] = raw_credentials["private_key"].replace("\\n", "\n").strip()
+
+# Establish direct, standard connection objects
+gc = gspread.service_account_from_dict(raw_credentials)
+sh = gc.open_by_key(SPREADSHEET_ID)
+worksheet = sh.get_worksheet(0)
+
+# Pull down current table rows safely
 try:
-    raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
-    raw_credentials["type"] = "service_account"
-    
-    service_account_email = raw_credentials.get("client_email", "Unknown Email")
-    st.info(f"🔑 Authenticating as Service Account: `{service_account_email}`")
-    
-    gc = gspread.service_account_from_dict(raw_credentials)
-    worksheet = gc.open_by_key(SPREADSHEET_ID).get_worksheet(0)
-    
-    # Read records safely
-    try:
-        records = worksheet.get_all_records()
-        if records:
-            df = pd.DataFrame(records)
-    except Exception:
-        pass
+    records = worksheet.get_all_records()
+    df = pd.DataFrame(records) if records else pd.DataFrame(columns=DEFAULT_COLS)
+except Exception:
+    df = pd.DataFrame(columns=DEFAULT_COLS)
 
-    st.success("⚡ Database Connection Established Successfully!")
-
-except Exception as e:
-    error_msg = str(e).strip()
-    
-    # THE FIX: If Google threw a success code disguised as an error, FORCE the assignment
-    if "Response [200]" in error_msg or not error_msg:
-        try:
-            gc = gspread.service_account_from_dict(raw_credentials)
-            worksheet = gc.open_by_key(SPREADSHEET_ID).get_worksheet(0)
-            st.success("⚡ Database Connection Established (Bypassed 200 Wrapper Alert)!")
-            try:
-                records = worksheet.get_all_records()
-                if records:
-                    df = pd.DataFrame(records)
-            except:
-                pass
-        except Exception as bypass_err:
-            st.error(f"🛑 Actual Connection Error: {bypass_err}")
-    else:
-        st.error(f"🛑 RAW GOOGLE ERROR: {error_msg}")
+st.success("⚡ Database Pipeline Online")
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -71,24 +50,17 @@ if submit:
     if prod_name and qty:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
         
-        if worksheet is not None:
-            try:
-                # Direct check if sheet lacks headers or content
-                try:
-                    has_values = bool(worksheet.get_all_values())
-                except:
-                    has_values = False
-                    
-                if not has_values:
-                    worksheet.append_row(DEFAULT_COLS)
+        try:
+            # Check if headers exist; if completely blank sheet, establish them
+            if not worksheet.get_all_values():
+                worksheet.append_row(DEFAULT_COLS)
                 
-                worksheet.append_row(new_row)
-                st.sidebar.success(f"Successfully logged {prod_name}!")
-                st.rerun()
-            except Exception as write_error:
-                st.sidebar.error(f"Failed to save entry: {write_error}")
-        else:
-            st.sidebar.error("Database connection is offline. Variable 'worksheet' is None.")
+            # Append rows natively using the established worksheet reference
+            worksheet.append_row(new_row)
+            st.sidebar.success(f"Successfully logged {prod_name}!")
+            st.rerun()
+        except Exception as write_error:
+            st.sidebar.error(f"Write Failure: {write_error}")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
