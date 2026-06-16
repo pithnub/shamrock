@@ -1,71 +1,66 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-import gspread
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # --- APP SETUP & STYLING ---
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
 
-# Hardcoded direct ID string
 SPREADSHEET_ID = "1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo"
 DEFAULT_COLS = ['product_name', 'quantity', 'received_date', 'msds_link', 'notes']
 
-# --- CACHED GOOGLE SHEETS CONNECTION ---
+# --- CACHED RAW GOOGLE API CONNECTION ---
 @st.cache_resource(ttl=3600)
-def init_google_connection(sheet_id):
+def init_raw_sheets_api(sheet_id):
     try:
-        # Convert the native Streamlit Dict secret directly into a standard Python dict
+        # Pull the native dictionary out of Streamlit Secrets
         creds_dict = dict(st.secrets["gspread_creds"])
         
-        # CLEANUP: Explicitly convert literal '\n' text characters into real structural newlines
-       # CLEANUP: Explicitly normalize headers, footers, and line transitions
+        # Clean up line breaks in the key just in case
         if "private_key" in creds_dict:
-            key = creds_dict["private_key"]
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n").strip()
             
-            # 1. Clean out any literal '\n' text characters if present
-            key = key.replace("\\n", "\n")
-            
-            # 2. Ensure the header drops cleanly to the first data block
-            if "-----BEGIN PRIVATE KEY-----" in key and not key.startswith("-----BEGIN PRIVATE KEY-----\n"):
-                key = key.replace("-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\n")
-                
-            # 3. FIX: Ensure the footer drops cleanly to its own line at the very end
-            if "-----END PRIVATE KEY-----" in key and not key.endswith("\n-----END PRIVATE KEY-----"):
-                # Strip spaces/quotes, then isolate the banner on a fresh trailing line
-                key = key.rstrip('"\n\r ')
-                if not key.endswith("\n-----END PRIVATE KEY-----"):
-                    key = key.replace("-----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----")
-            
-            creds_dict["private_key"] = key.strip()
-        # Explicit scopes for authorization
-        EXPLICIT_SCOPES = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
+        SCOPES = [
+            'https://www.googleapis.com/auth/spreadsheets', 
+            'https://www.googleapis.com/auth/drive'
         ]
         
-        # Authenticate cleanly with the sanitized dict
-        gc = gspread.service_account_from_dict(creds_dict, scopes=EXPLICIT_SCOPES)
-        sh = gc.open_by_key(sheet_id)
-        return sh.get_worksheet(0)
+        # Generate raw google-auth credentials object
+        credentials = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        
+        # Build the official v4 sheets service client
+        service = build('sheets', 'v4', credentials=credentials)
+        return service.spreadsheets()
     except Exception as auth_err:
         st.error(f"🛑 Critical Authentication Failure: {auth_err}")
         return None
 
-# Establish or retrieve connection
-worksheet = init_google_connection(SPREADSHEET_ID)
+# Instantiate the raw spreadsheet service engine
+sheet_service = init_raw_sheets_api(SPREADSHEET_ID)
 
-# Pull down data rows safely
+# Pull down current table rows safely using raw API client
 df = pd.DataFrame(columns=DEFAULT_COLS)
-if worksheet is not None:
+if sheet_service is not None:
     try:
-        records = worksheet.get_all_records()
-        df = pd.DataFrame(records) if records else pd.DataFrame(columns=DEFAULT_COLS)
-        st.success("⚡ Database Pipeline Online")
+        # Request data using A1 Range notation (Assuming your sheet tab is named 'Sheet1')
+        result = sheet_service.values().get(spreadsheetId=SPREADSHEET_ID, range='Sheet1').execute()
+        values = result.get('values', [])
+        
+        if values:
+            # First row contains headers, subsequent rows contain data
+            headers = values[0]
+            rows = values[1:] if len(values) > 1 else []
+            df = pd.DataFrame(rows, columns=headers) if rows else pd.DataFrame(columns=DEFAULT_COLS)
+        else:
+            df = pd.DataFrame(columns=DEFAULT_COLS)
+            
+        st.success("⚡ Raw API Database Pipeline Online")
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"Error fetching data via API Client: {e}")
 else:
-    st.warning("⚠️ App is running offline. Check secret formatting configuration.")
+    st.warning("⚠️ App is running offline. Check credential configurations.")
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -80,17 +75,23 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
 if submit:
     if prod_name and qty:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
-        if worksheet is not None:
+        if sheet_service is not None:
             try:
-                if not worksheet.get_all_values():
-                    worksheet.append_row(DEFAULT_COLS)
-                worksheet.append_row(new_row)
+                body = {'values': [new_row]}
+                # Append the row using the raw API structure
+                sheet_service.values().append(
+                    spreadsheetId=SPREADSHEET_ID, 
+                    range='Sheet1', 
+                    valueInputOption='USER_ENTERED', 
+                    body=body
+                ).execute()
+                
                 st.sidebar.success(f"Successfully logged {prod_name}!")
                 st.rerun()
             except Exception as write_error:
                 st.sidebar.error(f"Write Failure: {write_error}")
         else:
-            st.sidebar.error("Cannot write: Database connection is offline.")
+            st.sidebar.error("Cannot write: Database service is offline.")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
@@ -101,6 +102,7 @@ if not df.empty and len(df) > 0:
     display_df = df.copy()
     
     if search_query:
+        # Safety normalization to string type before filtering
         display_df['product_name'] = display_df['product_name'].astype(str)
         display_df = display_df[display_df['product_name'].str.contains(search_query, case=False, na=False)]
         
@@ -117,4 +119,4 @@ if not df.empty and len(df) > 0:
         hide_index=True
     )
 else:
-    st.info("Your chemical inventory sheet is currently empty. Start logging samples in the sidebar!")
+    st.info("Your chemical inventory sheet is currently empty or unreadable. Start logging samples in the sidebar!")
