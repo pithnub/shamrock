@@ -8,11 +8,11 @@ import gspread
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
 
-SPREADSHEET_NAME = "Shamrock"
+SPREADSHEET_NAME = "shamrock"
 
 # --- DIRECT GOOGLE SHEETS CONNECTION VIA GSPREAD ---
 try:
-    # 1. Parse your raw JSON key string from secrets back into a dictionary
+    # 1. Parse your raw JSON key string from secrets
     raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     raw_credentials["type"] = "service_account"
     
@@ -23,17 +23,24 @@ try:
     sh = gc.open(SPREADSHEET_NAME)
     worksheet = sh.get_worksheet(0) # Open the first tab
     
-    # 4. Read data into a Pandas DataFrame
+    # 4. Read data safely into a Pandas DataFrame
     records = worksheet.get_all_records()
-    df = pd.DataFrame(records)
     
-    # If the sheet is brand new and completely empty, force standard headers
-    if df.empty:
+    if records:
+        df = pd.DataFrame(records)
+    else:
+        # If the sheet exists but has no data rows yet, build the baseline structure
         df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
         
 except Exception as e:
-    st.error(f"Connection Error: {e}")
-    df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+    # Double check we aren't just trapping a successful string response
+    error_msg = str(e)
+    if "Response [200]" in error_msg:
+        # If it's just a 200 success message slipping into the exception, create a clean empty frame
+        df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+    else:
+        st.error(f"Actual Connection Error: {e}")
+        df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -52,7 +59,11 @@ if submit:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
         
         try:
-            # Append directly to the bottom of the Google Sheet
+            # If the sheet is completely blank (no headers), insert headers first
+            if 'worksheet' in locals() and not worksheet.get_all_values():
+                worksheet.append_row(['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+            
+            # Append data directly to the bottom of the Google Sheet
             worksheet.append_row(new_row)
             st.sidebar.success(f"Successfully logged {prod_name}!")
             st.rerun()
@@ -68,7 +79,6 @@ if not df.empty and len(df) > 0:
     display_df = df.copy()
     
     if search_query:
-        # Quick safety check to handle any numeric columns gracefully during string filtering
         display_df['product_name'] = display_df['product_name'].astype(str)
         display_df = display_df[display_df['product_name'].str.contains(search_query, case=False, na=False)]
 
