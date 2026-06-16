@@ -10,6 +10,9 @@ st.title("🧪 Chemical Sample Inventory")
 
 SPREADSHEET_NAME = "shamrock"
 
+# Initialize worksheet as None at the very top so it always exists as a variable
+worksheet = None
+
 # --- DIRECT GOOGLE SHEETS CONNECTION VIA GSPREAD ---
 try:
     # 1. Parse your raw JSON key string from secrets
@@ -29,14 +32,18 @@ try:
     if records:
         df = pd.DataFrame(records)
     else:
-        # If the sheet exists but has no data rows yet, build the baseline structure
         df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
         
 except Exception as e:
-    # Double check we aren't just trapping a successful string response
     error_msg = str(e)
     if "Response [200]" in error_msg:
-        # If it's just a 200 success message slipping into the exception, create a clean empty frame
+        # If it was just a sneaky 200 success message wrapped as an exception,
+        # try to quickly grab the worksheet anyway if the connection object exists
+        try:
+            if 'sh' in locals():
+                worksheet = sh.get_worksheet(0)
+        except:
+            pass
         df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
     else:
         st.error(f"Actual Connection Error: {e}")
@@ -55,20 +62,23 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
 
 if submit:
     if prod_name and qty:
-        # Create the exact row layout to append
         new_row = [prod_name, qty, str(rec_date), msds, notes]
         
-        try:
-            # If the sheet is completely blank (no headers), insert headers first
-            if 'worksheet' in locals() and not worksheet.get_all_values():
-                worksheet.append_row(['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
-            
-            # Append data directly to the bottom of the Google Sheet
-            worksheet.append_row(new_row)
-            st.sidebar.success(f"Successfully logged {prod_name}!")
-            st.rerun()
-        except Exception as write_error:
-            st.sidebar.error(f"Failed to save entry: {write_error}")
+        # Verify the worksheet connection exists before attempting to write
+        if worksheet is not None:
+            try:
+                # If the sheet is completely blank (no headers), insert headers first
+                if not worksheet.get_all_values():
+                    worksheet.append_row(['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+                
+                # Append data directly to the bottom of the Google Sheet
+                worksheet.append_row(new_row)
+                st.sidebar.success(f"Successfully logged {prod_name}!")
+                st.rerun()
+            except Exception as write_error:
+                st.sidebar.error(f"Failed to save entry: {write_error}")
+        else:
+            st.sidebar.error("Database connection is currently unavailable. Please refresh the page.")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
