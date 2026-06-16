@@ -8,30 +8,27 @@ import json
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
 
+# Target Google Sheet URL variable
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0"
+
 # --- CONNECT TO GOOGLE SHEETS VIA RAW SECRETS ---
 try:
     # Read the raw text block from Streamlit secrets and parse it as a dictionary
     secret_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     
-    # Standardize the inner keys for the service account mapping
+    # Remove the conflicting "type" key if it exists
     if "type" in secret_credentials:
         del secret_credentials["type"]
         
-    # Consolidate all configuration into a single dictionary expected by the connector
-    connection_kwargs = {
-        "spreadsheet": "https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0",
-        **secret_credentials
-    }
-    
-    # Initialize the connection smoothly by unpacking the exact structure required
+    # Initialize the core connection object with just the credential parameters
     conn = st.connection(
         "gsheets",
         type=GSheetsConnection,
-        **connection_kwargs
+        **secret_credentials
     )
     
-    # Pull current data from the sheet
-    df = conn.read(ttl=0)
+    # Pass the spreadsheet URL directly into the read function call
+    df = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
     if df.empty:
         df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
         
@@ -60,9 +57,9 @@ if submit:
             "notes": notes
         }])
         
-        # Merge new entry and push up to Google Sheets
+        # Merge new entry and push up to Google Sheets by targeting the specific spreadsheet URL
         updated_df = pd.concat([df, new_row], ignore_index=True)
-        conn.update(data=updated_df)
+        conn.update(spreadsheet=SPREADSHEET_URL, data=updated_df)
         st.sidebar.success(f"Successfully logged {prod_name}!")
         st.rerun()
     else:
