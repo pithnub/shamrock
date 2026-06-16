@@ -8,39 +8,32 @@ import gspread
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
 
-# Hardcoded direct ID string to guarantee Google finds the file instantly
+# Hardcoded direct ID string
 SPREADSHEET_ID = "1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo"
 
-# --- DIRECT GOOGLE SHEETS CONNECTION VIA GSPREAD ---
-@st.cache_resource(ttl=3600)
-def get_google_worksheet(sheet_id):
-    try:
-        # Parse the raw JSON key block from secrets
-        raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
-        raw_credentials["type"] = "service_account"
-        
-        # Authenticate using standard Google Auth
-        gc = gspread.service_account_from_dict(raw_credentials)
-        
-        # Open directly by ID (100% foolproof vs text names)
-        sh = gc.open_by_key(sheet_id)
-        return sh.get_worksheet(0)
-    except Exception as e:
-        # If it returns a string success message disguised as an error, look for it
-        if "Response [200]" in str(e):
-            try:
-                gc = gspread.service_account_from_dict(raw_credentials)
-                sh = gc.open_by_key(sheet_id)
-                return sh.get_worksheet(0)
-            except:
-                pass
-        st.error(f"Google Connection Error: {e}")
-        return None
+# --- DIRECT GOOGLE SHEETS CONNECTION (DIAGNOSTIC MODE) ---
+try:
+    # 1. Parse your raw JSON key block from secrets
+    raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
+    raw_credentials["type"] = "service_account"
+    
+    # Extract the client email so we can verify it easily on screen
+    service_account_email = raw_credentials.get("client_email", "Unknown Email")
+    st.info(f"🔑 Authenticating as Service Account: `{service_account_email}`")
+    
+    # 2. Authenticate using standard Google Auth
+    gc = gspread.service_account_from_dict(raw_credentials)
+    
+    # 3. Attempt direct lookup by key
+    worksheet = gc.open_by_key(SPREADSHEET_ID).get_worksheet(0)
+    st.success("⚡ Database Connection Established Successfully!")
 
-# Establish connection
-worksheet = get_google_worksheet(SPREADSHEET_ID)
+except Exception as e:
+    # Force print the exact, unedited raw error to the screen
+    st.error(f"🛑 RAW GOOGLE ERROR: {e}")
+    worksheet = None
 
-# Read the data safely
+# --- READ THE DATA ---
 df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
 if worksheet is not None:
     try:
@@ -48,7 +41,6 @@ if worksheet is not None:
         if records:
             df = pd.DataFrame(records)
     except Exception as read_err:
-        # Fallback if the sheet is completely empty of entries/headers
         pass
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
@@ -65,28 +57,21 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
 if submit:
     if prod_name and qty:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
-        
         if worksheet is not None:
             try:
-                # If the sheet is brand new and completely blank, insert headers first
                 if not worksheet.get_all_values():
                     worksheet.append_row(['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
-                
-                # Append data directly to the bottom of the Google Sheet
                 worksheet.append_row(new_row)
                 st.sidebar.success(f"Successfully logged {prod_name}!")
                 st.rerun()
             except Exception as write_error:
                 st.sidebar.error(f"Failed to save entry: {write_error}")
         else:
-            st.sidebar.error("Database connection is offline. Verify your Google Sheet is shared with the service account email.")
+            st.sidebar.error("Database connection is offline.")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
 # --- MAIN PAGE: VIEW & SEARCH ---
-if worksheet is None:
-    st.warning("⚠️ App is running in offline sandbox mode. Please check the connection error message above.")
-
 if not df.empty and len(df) > 0:
     st.metric(label="Total Samples Accounted For", value=len(df))
     search_query = st.text_input("🔍 Filter samples by name...", "")
@@ -109,4 +94,5 @@ if not df.empty and len(df) > 0:
         hide_index=True
     )
 else:
-    st.info("Your chemical inventory sheet is currently empty. Start logging samples in the sidebar!")
+    if worksheet is not None:
+        st.info("Your chemical inventory sheet is currently empty. Start logging samples in the sidebar!")
