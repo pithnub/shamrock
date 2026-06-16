@@ -13,11 +13,10 @@ st.title("🧪 Chemical Sample Inventory")
 try:
     secret_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     
-    conn = st.connection(
+   conn = st.connection(
         "gsheets",
         type=GSheetsConnection,
         spreadsheet="https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0",
-        type="service_account",
         **secret_credentials  # This safely unpacks the entire key automatically
     )
     df = conn.read(ttl=0)
