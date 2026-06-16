@@ -11,7 +11,6 @@ st.title("🧪 Chemical Sample Inventory")
 # Hardcoded direct ID string
 SPREADSHEET_ID = "1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo"
 
-# Pre-define empty baseline columns
 DEFAULT_COLS = ['product_name', 'quantity', 'received_date', 'msds_link', 'notes']
 df = pd.DataFrame(columns=DEFAULT_COLS)
 worksheet = None
@@ -27,22 +26,35 @@ try:
     gc = gspread.service_account_from_dict(raw_credentials)
     worksheet = gc.open_by_key(SPREADSHEET_ID).get_worksheet(0)
     
-    # Try reading records safely
+    # Read records safely
     try:
         records = worksheet.get_all_records()
         if records:
             df = pd.DataFrame(records)
     except Exception:
-        # If it fails to read because the sheet is totally blank, we ignore it and use our default columns
         pass
 
     st.success("⚡ Database Connection Established Successfully!")
 
 except Exception as e:
     error_msg = str(e).strip()
-    if not error_msg:
-        error_msg = "Empty response error (usually means the sheet is totally blank or lacks column headers)."
-    st.error(f"🛑 RAW GOOGLE ERROR: {error_msg}")
+    
+    # THE FIX: If Google threw a success code disguised as an error, FORCE the assignment
+    if "Response [200]" in error_msg or not error_msg:
+        try:
+            gc = gspread.service_account_from_dict(raw_credentials)
+            worksheet = gc.open_by_key(SPREADSHEET_ID).get_worksheet(0)
+            st.success("⚡ Database Connection Established (Bypassed 200 Wrapper Alert)!")
+            try:
+                records = worksheet.get_all_records()
+                if records:
+                    df = pd.DataFrame(records)
+            except:
+                pass
+        except Exception as bypass_err:
+            st.error(f"🛑 Actual Connection Error: {bypass_err}")
+    else:
+        st.error(f"🛑 RAW GOOGLE ERROR: {error_msg}")
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -58,10 +70,16 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
 if submit:
     if prod_name and qty:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
+        
         if worksheet is not None:
             try:
-                # If the sheet has no values at all, write headers first
-                if not worksheet.get_all_values():
+                # Direct check if sheet lacks headers or content
+                try:
+                    has_values = bool(worksheet.get_all_values())
+                except:
+                    has_values = False
+                    
+                if not has_values:
                     worksheet.append_row(DEFAULT_COLS)
                 
                 worksheet.append_row(new_row)
@@ -70,7 +88,7 @@ if submit:
             except Exception as write_error:
                 st.sidebar.error(f"Failed to save entry: {write_error}")
         else:
-            st.sidebar.error("Database connection is offline.")
+            st.sidebar.error("Database connection is offline. Variable 'worksheet' is None.")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
