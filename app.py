@@ -8,7 +8,7 @@ import gspread
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
 
-SPREADSHEET_NAME = "Chemical Inventory Database"
+SPREADSHEET_NAME = "Shamrock"
 
 # --- DIRECT GOOGLE SHEETS CONNECTION VIA GSPREAD ---
 try:
