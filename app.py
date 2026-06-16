@@ -1,33 +1,26 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import sqlite3
 from datetime import date
 
-# --- DATABASE SETUP ---
-DB_NAME = "chemical_inventory.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS inventory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_name TEXT NOT NULL,
-            quantity TEXT NOT NULL,
-            received_date TEXT NOT NULL,
-            msds_link TEXT,
-            notes TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# --- APP HUDS & STYLING ---
+# --- APP SETUP & STYLING ---
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
-st.markdown("Track, manage, and access your sample stash without the Excel dread.")
+st.markdown("A sleek, Streamlit front-end powered by a permanent Google Sheets backend.")
+
+# --- CONNECT TO GOOGLE SHEETS ---
+# This establishes the connection using credentials we'll provide to the Streamlit Cloud dashboard
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Fetch existing data from the sheet
+try:
+    # We clear the cache on every rerun to make sure we immediately see new samples logged
+    df = conn.read(ttl=0)
+    # Ensure dataframe isn't completely empty and has columns
+    if df.empty:
+        df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+except Exception as e:
+    df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -42,40 +35,43 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
 
 if submit:
     if prod_name and qty:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute('''
-            INSERT INTO inventory (product_name, quantity, received_date, msds_link, notes)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (prod_name, qty, str(rec_date), msds, notes))
-        conn.commit()
-        conn.close()
-        st.sidebar.success(f"Added {prod_name} successfully!")
+        # Create a new row of data
+        new_row = pd.DataFrame([{
+            "product_name": prod_name,
+            "quantity": qty,
+            "received_date": str(rec_date),
+            "msds_link": msds,
+            "notes": notes
+        }])
+        
+        # Combine existing data with the new entry
+        updated_df = pd.concat([df, new_row], ignore_index=True)
+        
+        # Push back to Google Sheets
+        conn.update(data=updated_df)
+        st.sidebar.success(f"Successfully logged {prod_name} to the cloud!")
+        
+        # Rerun the app to refresh the main data view instantly
+        st.rerun()
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
 # --- MAIN PAGE: VIEW & SEARCH ---
-conn = sqlite3.connect(DB_NAME)
-df = pd.read_sql_query("SELECT * FROM inventory", conn)
-conn.close()
-
-if df.empty:
-    st.info("Your inventory is currently empty. Use the sidebar to add your first chemical sample!")
+if df.empty or len(df) == 0:
+    st.info("Your chemical inventory sheet is currently empty. Start logging samples in the sidebar!")
 else:
-    # Quick Metrics
+    # High-level tracking metric
     st.metric(label="Total Samples Accounted For", value=len(df))
     
-    # Search functionality
-    search_query = st.text_input("🔍 Search inventory by product name...", "")
-    if search_query:
-        df = df[df['product_name'].str.contains(search_query, case=False, na=False)]
-
-    # Format the dataframe for pretty display
-    # Dropping the ID column for user view, but keeping the rest
+    # Live Search bar
+    search_query = st.text_input("🔍 Filter samples by name...", "")
     display_df = df.copy()
     
-    # Render interactive data table
-    st.subheader("Current Stock")
+    if search_query:
+        display_df = display_df[display_df['product_name'].str.contains(search_query, case=False, na=False)]
+
+    # Clean, interactive UI Data Table
+    st.subheader("Current Stock Table")
     st.dataframe(
         display_df[['product_name', 'quantity', 'received_date', 'msds_link', 'notes']], 
         column_config={
@@ -83,7 +79,7 @@ else:
             "quantity": "Amount",
             "received_date": "Date Received",
             "msds_link": st.column_config.LinkColumn("MSDS Link", display_text="Open MSDS"),
-            "notes": "Notes"
+            "notes": "Notes / Hazards"
         },
         use_container_width=True,
         hide_index=True
