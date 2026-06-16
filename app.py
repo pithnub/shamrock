@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-import json
 import gspread
 
 # --- APP SETUP & STYLING ---
@@ -13,30 +12,30 @@ SPREADSHEET_ID = "1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo"
 DEFAULT_COLS = ['product_name', 'quantity', 'received_date', 'msds_link', 'notes']
 
 # --- CACHED GOOGLE SHEETS CONNECTION ---
-@st.cache_resource(ttl=3600)  # Keeps the connection alive in memory for an hour
+@st.cache_resource(ttl=3600)
 def init_google_connection(sheet_id):
     try:
-        raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
-        raw_credentials["type"] = "service_account"
-        if "private_key" in raw_credentials:
-            raw_credentials["private_key"] = raw_credentials["private_key"].replace("\\n", "\n").strip()
-
+        # Convert the native Streamlit Dict secret directly into a standard Python dict
+        creds_dict = dict(st.secrets["gspread_creds"])
+        
+        # Explicit scopes for authorization
         EXPLICIT_SCOPES = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-
-        gc = gspread.service_account_from_dict(raw_credentials, scopes=EXPLICIT_SCOPES)
+        
+        # Authenticate cleanly with the native dict
+        gc = gspread.service_account_from_dict(creds_dict, scopes=EXPLICIT_SCOPES)
         sh = gc.open_by_key(sheet_id)
         return sh.get_worksheet(0)
     except Exception as auth_err:
         st.error(f"🛑 Critical Authentication Failure: {auth_err}")
         return None
 
-# Establish or retrieve the cached connection object
+# Establish or retrieve connection
 worksheet = init_google_connection(SPREADSHEET_ID)
 
-# Pull down current table rows safely if connection is active
+# Pull down data rows safely
 df = pd.DataFrame(columns=DEFAULT_COLS)
 if worksheet is not None:
     try:
@@ -44,9 +43,9 @@ if worksheet is not None:
         df = pd.DataFrame(records) if records else pd.DataFrame(columns=DEFAULT_COLS)
         st.success("⚡ Database Pipeline Online")
     except Exception as e:
-        st.error(f"Error fetching data from sheet: {e}")
+        st.error(f"Error fetching data: {e}")
 else:
-    st.warning("⚠️ App is running offline. Check connection error above.")
+    st.warning("⚠️ App is running offline. Check secret formatting configuration.")
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -63,7 +62,6 @@ if submit:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
         if worksheet is not None:
             try:
-                # Use a fast check for completely empty sheets
                 if not worksheet.get_all_values():
                     worksheet.append_row(DEFAULT_COLS)
                 worksheet.append_row(new_row)
