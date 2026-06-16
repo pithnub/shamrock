@@ -13,16 +13,21 @@ try:
     # Read the raw text block from Streamlit secrets and parse it as a dictionary
     secret_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     
-    # Remove the inner "type": "service_account" key so it doesn't fight with type=GSheetsConnection
+    # Standardize the inner keys for the service account mapping
     if "type" in secret_credentials:
         del secret_credentials["type"]
+        
+    # Consolidate all configuration into a single dictionary expected by the connector
+    connection_kwargs = {
+        "spreadsheet": "https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0",
+        **secret_credentials
+    }
     
-    # Initialize the connection cleanly
+    # Initialize the connection smoothly by unpacking the exact structure required
     conn = st.connection(
         "gsheets",
         type=GSheetsConnection,
-        spreadsheet="https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0",
-        **secret_credentials
+        **connection_kwargs
     )
     
     # Pull current data from the sheet
