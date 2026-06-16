@@ -19,9 +19,25 @@ def init_google_connection(sheet_id):
         creds_dict = dict(st.secrets["gspread_creds"])
         
         # CLEANUP: Explicitly convert literal '\n' text characters into real structural newlines
+       # CLEANUP: Explicitly normalize headers, footers, and line transitions
         if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n").replace("\n", "\n").strip()
-        
+            key = creds_dict["private_key"]
+            
+            # 1. Clean out any literal '\n' text characters if present
+            key = key.replace("\\n", "\n")
+            
+            # 2. Ensure the header drops cleanly to the first data block
+            if "-----BEGIN PRIVATE KEY-----" in key and not key.startswith("-----BEGIN PRIVATE KEY-----\n"):
+                key = key.replace("-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\n")
+                
+            # 3. FIX: Ensure the footer drops cleanly to its own line at the very end
+            if "-----END PRIVATE KEY-----" in key and not key.endswith("\n-----END PRIVATE KEY-----"):
+                # Strip spaces/quotes, then isolate the banner on a fresh trailing line
+                key = key.rstrip('"\n\r ')
+                if not key.endswith("\n-----END PRIVATE KEY-----"):
+                    key = key.replace("-----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----")
+            
+            creds_dict["private_key"] = key.strip()
         # Explicit scopes for authorization
         EXPLICIT_SCOPES = [
             "https://www.googleapis.com/auth/spreadsheets",
