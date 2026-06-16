@@ -1,49 +1,33 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import date
 import json
+import gspread
 
 # --- APP SETUP & STYLING ---
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
 
-# Target Google Sheet URL variable
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0"
+SPREADSHEET_NAME = "Chemical Inventory Database"
 
-# --- CONNECT TO GOOGLE SHEETS BY DIRECT INJECTION ---
+# --- DIRECT GOOGLE SHEETS CONNECTION VIA GSPREAD ---
 try:
-    # 1. Parse your raw JSON key string back into a Python dictionary
+    # 1. Parse your raw JSON key string from secrets back into a dictionary
     raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
-    
-    # Ensure the type parameter inside the dictionary matches what Google expects
     raw_credentials["type"] = "service_account"
     
-    # 2. Directly inject the values into Streamlit's running configuration memory.
-    # This bypasses the st.connection() arguments completely, giving the library
-    # exactly what it expects at the root configuration level.
-    st.secrets["connections"] = {
-        "gsheets": {
-            "type": "service_account",
-            "spreadsheet": SPREADSHEET_URL,
-            "project_id": raw_credentials.get("project_id"),
-            "private_key_id": raw_credentials.get("private_key_id"),
-            "private_key": raw_credentials.get("private_key"),
-            "client_email": raw_credentials.get("client_email"),
-            "client_id": raw_credentials.get("client_id"),
-            "auth_uri": raw_credentials.get("auth_uri"),
-            "token_uri": raw_credentials.get("token_uri"),
-            "auth_provider_x509_cert_url": raw_credentials.get("auth_provider_x509_cert_url"),
-            "client_x509_cert_url": raw_credentials.get("client_x509_cert_url")
-        }
-    }
-
-    # 3. Initialize the connection with ZERO custom keyword arguments.
-    # It will pull everything effortlessly from the memory injection above.
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    # 2. Authenticate directly using the native Google library
+    gc = gspread.service_account_from_dict(raw_credentials)
     
-    # Pull current data from the sheet
-    df = conn.read(ttl=0)
+    # 3. Open the spreadsheet by its exact name
+    sh = gc.open(SPREADSHEET_NAME)
+    worksheet = sh.get_worksheet(0) # Open the first tab
+    
+    # 4. Read data into a Pandas DataFrame
+    records = worksheet.get_all_records()
+    df = pd.DataFrame(records)
+    
+    # If the sheet is brand new and completely empty, force standard headers
     if df.empty:
         df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
         
@@ -64,19 +48,16 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
 
 if submit:
     if prod_name and qty:
-        new_row = pd.DataFrame([{
-            "product_name": prod_name,
-            "quantity": qty,
-            "received_date": str(rec_date),
-            "msds_link": msds,
-            "notes": notes
-        }])
+        # Create the exact row layout to append
+        new_row = [prod_name, qty, str(rec_date), msds, notes]
         
-        # Merge new entry and push up to Google Sheets
-        updated_df = pd.concat([df, new_row], ignore_index=True)
-        conn.update(data=updated_df)
-        st.sidebar.success(f"Successfully logged {prod_name}!")
-        st.rerun()
+        try:
+            # Append directly to the bottom of the Google Sheet
+            worksheet.append_row(new_row)
+            st.sidebar.success(f"Successfully logged {prod_name}!")
+            st.rerun()
+        except Exception as write_error:
+            st.sidebar.error(f"Failed to save entry: {write_error}")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
@@ -87,6 +68,8 @@ if not df.empty and len(df) > 0:
     display_df = df.copy()
     
     if search_query:
+        # Quick safety check to handle any numeric columns gracefully during string filtering
+        display_df['product_name'] = display_df['product_name'].astype(str)
         display_df = display_df[display_df['product_name'].str.contains(search_query, case=False, na=False)]
 
     st.dataframe(
