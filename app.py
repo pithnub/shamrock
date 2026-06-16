@@ -12,28 +12,41 @@ st.title("🧪 Chemical Sample Inventory")
 SPREADSHEET_ID = "1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo"
 DEFAULT_COLS = ['product_name', 'quantity', 'received_date', 'msds_link', 'notes']
 
-# --- DIRECT GOOGLE SHEETS CONNECTION ---
-# Load credentials and strictly ensure the private key string structure is preserved
-raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
-raw_credentials["type"] = "service_account"
+# --- CACHED GOOGLE SHEETS CONNECTION ---
+@st.cache_resource(ttl=3600)  # Keeps the connection alive in memory for an hour
+def init_google_connection(sheet_id):
+    try:
+        raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
+        raw_credentials["type"] = "service_account"
+        if "private_key" in raw_credentials:
+            raw_credentials["private_key"] = raw_credentials["private_key"].replace("\\n", "\n").strip()
 
-if "private_key" in raw_credentials:
-    # Clean up standard JSON escaping issues that often occur during text parsing
-    raw_credentials["private_key"] = raw_credentials["private_key"].replace("\\n", "\n").strip()
+        EXPLICIT_SCOPES = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
 
-# Establish direct, standard connection objects
-gc = gspread.service_account_from_dict(raw_credentials)
-sh = gc.open_by_key(SPREADSHEET_ID)
-worksheet = sh.get_worksheet(0)
+        gc = gspread.service_account_from_dict(raw_credentials, scopes=EXPLICIT_SCOPES)
+        sh = gc.open_by_key(sheet_id)
+        return sh.get_worksheet(0)
+    except Exception as auth_err:
+        st.error(f"🛑 Critical Authentication Failure: {auth_err}")
+        return None
 
-# Pull down current table rows safely
-try:
-    records = worksheet.get_all_records()
-    df = pd.DataFrame(records) if records else pd.DataFrame(columns=DEFAULT_COLS)
-except Exception:
-    df = pd.DataFrame(columns=DEFAULT_COLS)
+# Establish or retrieve the cached connection object
+worksheet = init_google_connection(SPREADSHEET_ID)
 
-st.success("⚡ Database Pipeline Online")
+# Pull down current table rows safely if connection is active
+df = pd.DataFrame(columns=DEFAULT_COLS)
+if worksheet is not None:
+    try:
+        records = worksheet.get_all_records()
+        df = pd.DataFrame(records) if records else pd.DataFrame(columns=DEFAULT_COLS)
+        st.success("⚡ Database Pipeline Online")
+    except Exception as e:
+        st.error(f"Error fetching data from sheet: {e}")
+else:
+    st.warning("⚠️ App is running offline. Check connection error above.")
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -43,24 +56,23 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
     rec_date = st.date_input("Received Date", date.today())
     msds = st.text_input("MSDS URL / Link")
     notes = st.text_area("Notes / Hazards")
-    
     submit = st.form_submit_button("Add to Inventory")
 
 if submit:
     if prod_name and qty:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
-        
-        try:
-            # Check if headers exist; if completely blank sheet, establish them
-            if not worksheet.get_all_values():
-                worksheet.append_row(DEFAULT_COLS)
-                
-            # Append rows natively using the established worksheet reference
-            worksheet.append_row(new_row)
-            st.sidebar.success(f"Successfully logged {prod_name}!")
-            st.rerun()
-        except Exception as write_error:
-            st.sidebar.error(f"Write Failure: {write_error}")
+        if worksheet is not None:
+            try:
+                # Use a fast check for completely empty sheets
+                if not worksheet.get_all_values():
+                    worksheet.append_row(DEFAULT_COLS)
+                worksheet.append_row(new_row)
+                st.sidebar.success(f"Successfully logged {prod_name}!")
+                st.rerun()
+            except Exception as write_error:
+                st.sidebar.error(f"Write Failure: {write_error}")
+        else:
+            st.sidebar.error("Cannot write: Database connection is offline.")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
@@ -73,9 +85,9 @@ if not df.empty and len(df) > 0:
     if search_query:
         display_df['product_name'] = display_df['product_name'].astype(str)
         display_df = display_df[display_df['product_name'].str.contains(search_query, case=False, na=False)]
-
+        
     st.dataframe(
-        display_df[DEFAULT_COLS], 
+        display_df[DEFAULT_COLS],
         column_config={
             "product_name": "Product Name",
             "quantity": "Amount",
