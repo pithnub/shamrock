@@ -18,13 +18,17 @@ def init_google_connection(sheet_id):
         # Convert the native Streamlit Dict secret directly into a standard Python dict
         creds_dict = dict(st.secrets["gspread_creds"])
         
+        # CLEANUP: Explicitly convert literal '\n' text characters into real structural newlines
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n").replace("\n", "\n").strip()
+        
         # Explicit scopes for authorization
         EXPLICIT_SCOPES = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Authenticate cleanly with the native dict
+        # Authenticate cleanly with the sanitized dict
         gc = gspread.service_account_from_dict(creds_dict, scopes=EXPLICIT_SCOPES)
         sh = gc.open_by_key(sheet_id)
         return sh.get_worksheet(0)
