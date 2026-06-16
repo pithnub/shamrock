@@ -13,7 +13,11 @@ try:
     # Read the raw text block from Streamlit secrets and parse it as a dictionary
     secret_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     
-    # Initialize connection without duplicate arguments or misaligned indents
+    # Remove the inner "type": "service_account" key so it doesn't fight with type=GSheetsConnection
+    if "type" in secret_credentials:
+        del secret_credentials["type"]
+    
+    # Initialize the connection cleanly
     conn = st.connection(
         "gsheets",
         type=GSheetsConnection,
