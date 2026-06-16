@@ -8,46 +8,48 @@ import gspread
 st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="wide")
 st.title("🧪 Chemical Sample Inventory")
 
-SPREADSHEET_NAME = "shamrock"
-
-# Initialize worksheet as None at the very top so it always exists as a variable
-worksheet = None
+# Hardcoded direct ID string to guarantee Google finds the file instantly
+SPREADSHEET_ID = "1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo"
 
 # --- DIRECT GOOGLE SHEETS CONNECTION VIA GSPREAD ---
-try:
-    # 1. Parse your raw JSON key string from secrets
-    raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
-    raw_credentials["type"] = "service_account"
-    
-    # 2. Authenticate directly using the native Google library
-    gc = gspread.service_account_from_dict(raw_credentials)
-    
-    # 3. Open the spreadsheet by its exact name
-    sh = gc.open(SPREADSHEET_NAME)
-    worksheet = sh.get_worksheet(0) # Open the first tab
-    
-    # 4. Read data safely into a Pandas DataFrame
-    records = worksheet.get_all_records()
-    
-    if records:
-        df = pd.DataFrame(records)
-    else:
-        df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+@st.cache_resource(ttl=3600)
+def get_google_worksheet(sheet_id):
+    try:
+        # Parse the raw JSON key block from secrets
+        raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
+        raw_credentials["type"] = "service_account"
         
-except Exception as e:
-    error_msg = str(e)
-    if "Response [200]" in error_msg:
-        # If it was just a sneaky 200 success message wrapped as an exception,
-        # try to quickly grab the worksheet anyway if the connection object exists
-        try:
-            if 'sh' in locals():
-                worksheet = sh.get_worksheet(0)
-        except:
-            pass
-        df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
-    else:
-        st.error(f"Actual Connection Error: {e}")
-        df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+        # Authenticate using standard Google Auth
+        gc = gspread.service_account_from_dict(raw_credentials)
+        
+        # Open directly by ID (100% foolproof vs text names)
+        sh = gc.open_by_key(sheet_id)
+        return sh.get_worksheet(0)
+    except Exception as e:
+        # If it returns a string success message disguised as an error, look for it
+        if "Response [200]" in str(e):
+            try:
+                gc = gspread.service_account_from_dict(raw_credentials)
+                sh = gc.open_by_key(sheet_id)
+                return sh.get_worksheet(0)
+            except:
+                pass
+        st.error(f"Google Connection Error: {e}")
+        return None
+
+# Establish connection
+worksheet = get_google_worksheet(SPREADSHEET_ID)
+
+# Read the data safely
+df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+if worksheet is not None:
+    try:
+        records = worksheet.get_all_records()
+        if records:
+            df = pd.DataFrame(records)
+    except Exception as read_err:
+        # Fallback if the sheet is completely empty of entries/headers
+        pass
 
 # --- SIDEBAR: ADD NEW SAMPLE ---
 st.sidebar.header("📥 Log New Sample")
@@ -64,10 +66,9 @@ if submit:
     if prod_name and qty:
         new_row = [prod_name, qty, str(rec_date), msds, notes]
         
-        # Verify the worksheet connection exists before attempting to write
         if worksheet is not None:
             try:
-                # If the sheet is completely blank (no headers), insert headers first
+                # If the sheet is brand new and completely blank, insert headers first
                 if not worksheet.get_all_values():
                     worksheet.append_row(['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
                 
@@ -78,11 +79,14 @@ if submit:
             except Exception as write_error:
                 st.sidebar.error(f"Failed to save entry: {write_error}")
         else:
-            st.sidebar.error("Database connection is currently unavailable. Please refresh the page.")
+            st.sidebar.error("Database connection is offline. Verify your Google Sheet is shared with the service account email.")
     else:
         st.sidebar.error("Product Name and Quantity are required.")
 
 # --- MAIN PAGE: VIEW & SEARCH ---
+if worksheet is None:
+    st.warning("⚠️ App is running in offline sandbox mode. Please check the connection error message above.")
+
 if not df.empty and len(df) > 0:
     st.metric(label="Total Samples Accounted For", value=len(df))
     search_query = st.text_input("🔍 Filter samples by name...", "")
