@@ -1,2 +1,4 @@
 streamlit
 pandas
+st-files-connection
+st-ghsheets-connection
