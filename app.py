@@ -31,7 +31,7 @@ with st.sidebar.form("sample_form", clear_on_submit=True):
     msds = st.text_input("MSDS URL / Link")
     notes = st.text_area("Notes / Hazards")
     
-    submit = st.form_submit_with_button("Add to Inventory")
+    submit = st.form_submit_button("Add to Inventory")
 
 if submit:
     if prod_name and qty:
