@@ -11,25 +11,39 @@ st.title("🧪 Chemical Sample Inventory")
 # Target Google Sheet URL variable
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0"
 
-# --- CONNECT TO GOOGLE SHEETS VIA RAW SECRETS ---
+# --- CONNECT TO GOOGLE SHEETS BY DIRECT INJECTION ---
 try:
-    # Read the raw text block from Streamlit secrets and parse it as a dictionary
+    # 1. Parse your raw JSON key string back into a Python dictionary
     raw_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     
-    # Ensure the 'type' value inside the JSON block is set to 'service_account'
-    # (Google needs this inside the credentials block to validate the key)
+    # Ensure the type parameter inside the dictionary matches what Google expects
     raw_credentials["type"] = "service_account"
-        
-    # Initialize the core connection object by nesting the credentials
-    # under the 'service_account_info' parameter that streamlit-gsheets expects
-    conn = st.connection(
-        "gsheets",
-        type=GSheetsConnection,
-        service_account_info=raw_credentials
-    )
     
-    # Pass the spreadsheet URL directly into the read function call
-    df = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
+    # 2. Directly inject the values into Streamlit's running configuration memory.
+    # This bypasses the st.connection() arguments completely, giving the library
+    # exactly what it expects at the root configuration level.
+    st.secrets["connections"] = {
+        "gsheets": {
+            "type": "service_account",
+            "spreadsheet": SPREADSHEET_URL,
+            "project_id": raw_credentials.get("project_id"),
+            "private_key_id": raw_credentials.get("private_key_id"),
+            "private_key": raw_credentials.get("private_key"),
+            "client_email": raw_credentials.get("client_email"),
+            "client_id": raw_credentials.get("client_id"),
+            "auth_uri": raw_credentials.get("auth_uri"),
+            "token_uri": raw_credentials.get("token_uri"),
+            "auth_provider_x509_cert_url": raw_credentials.get("auth_provider_x509_cert_url"),
+            "client_x509_cert_url": raw_credentials.get("client_x509_cert_url")
+        }
+    }
+
+    # 3. Initialize the connection with ZERO custom keyword arguments.
+    # It will pull everything effortlessly from the memory injection above.
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    
+    # Pull current data from the sheet
+    df = conn.read(ttl=0)
     if df.empty:
         df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
         
@@ -58,9 +72,9 @@ if submit:
             "notes": notes
         }])
         
-        # Merge new entry and push up to Google Sheets by targeting the specific spreadsheet URL
+        # Merge new entry and push up to Google Sheets
         updated_df = pd.concat([df, new_row], ignore_index=True)
-        conn.update(spreadsheet=SPREADSHEET_URL, data=updated_df)
+        conn.update(data=updated_df)
         st.sidebar.success(f"Successfully logged {prod_name}!")
         st.rerun()
     else:
