@@ -9,19 +9,23 @@ st.set_page_config(page_title="Chemical Sample Lab", page_icon="🧪", layout="w
 st.title("🧪 Chemical Sample Inventory")
 
 # --- CONNECT TO GOOGLE SHEETS VIA RAW SECRETS ---
-# We read the raw text block, parse it into a Python dictionary, and pass it directly
 try:
+    # Read the raw text block from Streamlit secrets and parse it as a dictionary
     secret_credentials = json.loads(st.secrets["secrets"]["raw_json"])
     
-   conn = st.connection(
+    # Initialize connection without duplicate arguments or misaligned indents
+    conn = st.connection(
         "gsheets",
         type=GSheetsConnection,
         spreadsheet="https://docs.google.com/spreadsheets/d/1Ou4Iwqz7qlU7faz_0K_PdxTd5YJiEUKMfJ5LWCrlHJo/edit?gid=0#gid=0",
-        **secret_credentials  # This safely unpacks the entire key automatically
+        **secret_credentials
     )
+    
+    # Pull current data from the sheet
     df = conn.read(ttl=0)
     if df.empty:
         df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
+        
 except Exception as e:
     st.error(f"Connection Error: {e}")
     df = pd.DataFrame(columns=['product_name', 'quantity', 'received_date', 'msds_link', 'notes'])
@@ -46,6 +50,8 @@ if submit:
             "msds_link": msds,
             "notes": notes
         }])
+        
+        # Merge new entry and push up to Google Sheets
         updated_df = pd.concat([df, new_row], ignore_index=True)
         conn.update(data=updated_df)
         st.sidebar.success(f"Successfully logged {prod_name}!")
